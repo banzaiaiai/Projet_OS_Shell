@@ -18,6 +18,7 @@ typedef struct process {
   char completed;       /* true if process has completed */
   char stopped;         /* true if process has stopped */
   int status;           /* reported status value */
+  int taille;
 } process;
 
 /* A job is a pipeline of processes.  */
@@ -199,6 +200,7 @@ void launch_process(process *p, pid_t pgid, int infile, int outfile,
 
   /* Exec the new process.  Make sure we exit.  */
   execvp(p->argv[0], p->argv);
+
   perror("execvp");
   exit(1);
 }
@@ -271,8 +273,22 @@ int main(int argc, char *argv[]) {
     // Supprimer le saut de ligne
     input[strcspn(input, "\n")] = 0;
 
+    // Vérifier si la commande est "exit"
     if (strcmp(input, "exit") == 0) {
       break;
+    }
+
+    // Vérifier si la commande est "cd"
+    if (strncmp(input, "cd ", 3) == 0) {
+      char *dir = input + 3; // Récupérer l'argument après "cd "
+      if (strlen(dir) == 0) {
+        printf("réuss\n");
+        chdir("~/");
+      }
+      if (chdir(dir) != 0) {
+        perror("chdir");
+      }
+      continue; // Éviter de créer un job inutile
     }
 
     // Allouer un job
@@ -316,6 +332,7 @@ int main(int argc, char *argv[]) {
     new_process->stopped = 0;
     new_process->status = 0;
     new_process->pid = 0;
+    new_process->taille = arg_index;
 
     // Lier le process au job
     new_job->first_process = new_process;
@@ -324,6 +341,6 @@ int main(int argc, char *argv[]) {
     launch_job(new_job, 1);
   }
 
-  printf("Exiting shaell...\n");
+  printf("Exiting mael shell...\n");
   return 0;
 }
