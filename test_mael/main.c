@@ -279,11 +279,11 @@ int main(int argc, char *argv[]) {
     }
 
     // Vérifier si la commande est "cd"
-    if (strncmp(input, "cd ", 3) == 0) {
+    if (strncmp(input, "cd", 2) == 0) {
       char *dir = input + 3; // Récupérer l'argument après "cd "
       if (strlen(dir) == 0) {
-        printf("réuss\n");
-        chdir("~/");
+        chdir(getenv("HOME"));
+        continue;
       }
       if (chdir(dir) != 0) {
         perror("chdir");
