@@ -9,6 +9,9 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+#include <readline/readline.h>
+#include <readline/history.h>
+
 // Structure
 /* A process is a single process.  */
 typedef struct process {
@@ -262,83 +265,118 @@ int main(int argc, char *argv[]) {
   init_shell();
 
   while (true) {
-    printf("mael shell> ");
-    char input[1024];
+    //printf("mael shell> ");
+    //char input[1024];
 
     // Lire la commande entrée par l'utilisateur
-    if (!fgets(input, sizeof(input), stdin)) {
-      break; // Fin de fichier (Ctrl+D)
+    //if (!fgets(input, sizeof(input), stdin)) {
+    //  break; // Fin de fichier (Ctrl+D)
+    //}
+
+    char *input = readline("mael shell> ");
+    
+    // Handle EOF (Ctrl+D)
+    if (!input) {
+        printf("\n");
+        break;
     }
 
     // Supprimer le saut de ligne
-    input[strcspn(input, "\n")] = 0;
+    //input[strcspn(input, "\n")] = 0;
+    if (input[0] != '\0') {
+      add_history(input);
+      
+      // Vérifier si la commande est "exit"
+      if (strcmp(input, "exit") == 0) {
+        free(input);
+        break;
+      }
 
-    // Vérifier si la commande est "exit"
-    if (strcmp(input, "exit") == 0) {
-      break;
-    }
+      // Vérifier si la commande est "cd"
+      if (strncmp(input, "cd", 2) == 0) {
+        char *dir = input + 3; // Récupérer l'argument après "cd "
+        while (*dir == ' ') dir++; // Skip any extra spaces
+        
+        if (strlen(dir) == 0) {
+          chdir(getenv("HOME"));
+          continue;
+        }
+        if (chdir(dir) != 0) {
+          perror("chdir");
+        }
+        free(input);
+        continue; // Éviter de créer un job inutile
+      }
 
-    // Vérifier si la commande est "cd"
-    if (strncmp(input, "cd", 2) == 0) {
-      char *dir = input + 3; // Récupérer l'argument après "cd "
-      if (strlen(dir) == 0) {
-        chdir(getenv("HOME"));
+      // Allouer un job
+      job *new_job = malloc(sizeof(job));
+      if (!new_job) {
+        perror("malloc");
+        free(input);
         continue;
       }
-      if (chdir(dir) != 0) {
-        perror("chdir");
+
+      new_job->command = strdup(input);
+      new_job->stdin = STDIN_FILENO;
+      new_job->stdout = STDOUT_FILENO;
+      new_job->stderr = STDERR_FILENO;
+      new_job->pgid = 0;
+      new_job->notified = 0;
+      new_job->next = NULL;
+
+      // Allouer un processus
+      process *new_process = malloc(sizeof(process));
+      if (!new_process) {
+        perror("malloc");
+        free(new_job->command);
+        free(new_job);
+        free(input);
+        continue;
       }
-      continue; // Éviter de créer un job inutile
+
+      // Tokenizer la commande pour en faire un tableau d'arguments
+      char *token;
+      char **args = malloc(64 * sizeof(char *));
+      int arg_index = 0;
+
+      // Make a copy of input since strtok modifies the string
+      char *input_copy = strdup(input);
+      if (!input_copy) {
+          perror("strdup");
+          free(new_process);
+          free(new_job->command);
+          free(new_job);
+          free(input);
+          continue;
+      }
+
+      token = strtok(input, " ");
+      while (token != NULL) {
+        args[arg_index++] = strdup(token);
+        token = strtok(NULL, " ");
+      }
+      args[arg_index] = NULL; // Terminer le tableau d'arguments
+
+      free(input_copy); // Free the copy after tokenizing
+
+      new_process->argv = args;
+      new_process->next = NULL;
+      new_process->completed = 0;
+      new_process->stopped = 0;
+      new_process->status = 0;
+      new_process->pid = 0;
+      new_process->taille = arg_index;
+
+      // Lier le process au job
+      new_job->first_process = new_process;
+
+      // Lancer le job en foreground
+      launch_job(new_job, 1);
+
     }
 
-    // Allouer un job
-    job *new_job = malloc(sizeof(job));
-    if (!new_job) {
-      perror("malloc");
-      continue;
-    }
-
-    new_job->command = strdup(input);
-    new_job->stdin = STDIN_FILENO;
-    new_job->stdout = STDOUT_FILENO;
-    new_job->stderr = STDERR_FILENO;
-    new_job->pgid = 0;
-    new_job->notified = 0;
-    new_job->next = NULL;
-
-    // Allouer un processus
-    process *new_process = malloc(sizeof(process));
-    if (!new_process) {
-      perror("malloc");
-      free(new_job);
-      continue;
-    }
-
-    // Tokenizer la commande pour en faire un tableau d'arguments
-    char *token;
-    char **args = malloc(64 * sizeof(char *));
-    int arg_index = 0;
-
-    token = strtok(input, " ");
-    while (token != NULL) {
-      args[arg_index++] = strdup(token);
-      token = strtok(NULL, " ");
-    }
-    args[arg_index] = NULL; // Terminer le tableau d'arguments
-
-    new_process->argv = args;
-    new_process->next = NULL;
-    new_process->completed = 0;
-    new_process->stopped = 0;
-    new_process->status = 0;
-    new_process->pid = 0;
-    new_process->taille = arg_index;
-
-    // Lier le process au job
-    new_job->first_process = new_process;
-
-    // Lancer le job en foreground
-    launch_job(new_job, 1);
+    // Free the inpu from readline outside the if statement
+    free(input);
   }
 
   printf("Exiting mael shell...\n");
