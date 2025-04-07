@@ -1,5 +1,8 @@
 #include <errno.h>
-#define _OPEN_SYS
+#include <stdio.h>
+#define _²OPEN_SYS
+#include <readline/history.h>
+#include <readline/readline.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -9,8 +12,6 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
-#include <readline/readline.h>
-#include <readline/history.h>
 
 // Structure
 /* A process is a single process.  */
@@ -260,32 +261,42 @@ void launch_job(job *j, int foreground) {
   else
     put_job_in_background(j, 0);
 }
-
+job *makeJob(char *input) {
+  job *new_job = malloc(sizeof(job));
+  new_job->command = strdup(input);
+  new_job->stdin = STDIN_FILENO;
+  new_job->stdout = STDOUT_FILENO;
+  new_job->stderr = STDERR_FILENO;
+  new_job->pgid = 0;
+  new_job->notified = 0;
+  new_job->next = NULL;
+  return new_job;
+}
 int main(int argc, char *argv[]) {
   init_shell();
 
   while (true) {
-    //printf("mael shell> ");
-    //char input[1024];
+    // printf("mael shell> ");
+    // char input[1024];
 
     // Lire la commande entrée par l'utilisateur
-    //if (!fgets(input, sizeof(input), stdin)) {
+    // if (!fgets(input, sizeof(input), stdin)) {
     //  break; // Fin de fichier (Ctrl+D)
     //}
 
     char *input = readline("mael shell> ");
-    
+
     // Handle EOF (Ctrl+D)
     if (!input) {
-        printf("\n");
-        break;
+      printf("\n");
+      break;
     }
 
     // Supprimer le saut de ligne
-    //input[strcspn(input, "\n")] = 0;
+    // input[strcspn(input, "\n")] = 0;
     if (input[0] != '\0') {
       add_history(input);
-      
+
       // Vérifier si la commande est "exit"
       if (strcmp(input, "exit") == 0) {
         free(input);
@@ -295,8 +306,9 @@ int main(int argc, char *argv[]) {
       // Vérifier si la commande est "cd"
       if (strncmp(input, "cd", 2) == 0) {
         char *dir = input + 3; // Récupérer l'argument après "cd "
-        while (*dir == ' ') dir++; // Skip any extra spaces
-        
+        while (*dir == ' ')
+          dir++; // Skip any extra spaces
+
         if (strlen(dir) == 0) {
           chdir(getenv("HOME"));
           continue;
@@ -325,8 +337,9 @@ int main(int argc, char *argv[]) {
       new_job->next = NULL;
 
       // Allouer un processus
+      process *afteur_process = malloc(sizeof(process));
       process *new_process = malloc(sizeof(process));
-      if (!new_process) {
+      if (!afteur_process) {
         perror("malloc");
         free(new_job->command);
         free(new_job);
@@ -334,45 +347,75 @@ int main(int argc, char *argv[]) {
         continue;
       }
 
-      // Tokenizer la commande pour en faire un tableau d'arguments
       char *token;
       char **args = malloc(64 * sizeof(char *));
       int arg_index = 0;
 
-      // Make a copy of input since strtok modifies the string
       char *input_copy = strdup(input);
       if (!input_copy) {
-          perror("strdup");
-          free(new_process);
-          free(new_job->command);
-          free(new_job);
-          free(input);
-          continue;
+        perror("strdup");
+        free(new_job->command);
+        free(new_job);
+        free(input);
+        continue;
       }
 
-      token = strtok(input, " ");
+      process *head = NULL;
+      process *tail = NULL;
+
+      token = strtok(input_copy, " ");
       while (token != NULL) {
-        args[arg_index++] = strdup(token);
+        if (strcmp(token, "|") == 0) {
+          args[arg_index] = NULL;
+
+          process *p = malloc(sizeof(process));
+          p->argv = args;
+          p->next = NULL;
+          p->completed = 0;
+          p->stopped = 0;
+          p->status = 0;
+          p->pid = 0;
+          p->taille = arg_index;
+
+          if (head == NULL) {
+            head = tail = p;
+          } else {
+            tail->next = p;
+            tail = p;
+          }
+
+          args = malloc(64 * sizeof(char *));
+          arg_index = 0;
+        } else {
+          args[arg_index++] = strdup(token);
+        }
+
         token = strtok(NULL, " ");
       }
-      args[arg_index] = NULL; // Terminer le tableau d'arguments
 
-      free(input_copy); // Free the copy after tokenizing
+      // Ajouter le dernier process après la dernière commande
+      if (arg_index > 0) {
+        args[arg_index] = NULL;
+        process *p = malloc(sizeof(process));
+        p->argv = args;
+        p->next = NULL;
+        p->completed = 0;
+        p->stopped = 0;
+        p->status = 0;
+        p->pid = 0;
+        p->taille = arg_index;
 
-      new_process->argv = args;
-      new_process->next = NULL;
-      new_process->completed = 0;
-      new_process->stopped = 0;
-      new_process->status = 0;
-      new_process->pid = 0;
-      new_process->taille = arg_index;
+        if (head == NULL) {
+          head = tail = p;
+        } else {
+          tail->next = p;
+          tail = p;
+        }
+      }
 
-      // Lier le process au job
-      new_job->first_process = new_process;
-
-      // Lancer le job en foreground
+      free(input_copy);
+      new_job->first_process = head;
       launch_job(new_job, 1);
-
     }
 
     // Free the inpu from readline outside the if statement
