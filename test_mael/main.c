@@ -365,8 +365,12 @@ int main(int argc, char *argv[]) {
       process *head = NULL;
       process *tail = NULL;
 
-      bool next_token_is_output = false;
       bool next_token_is_input = false;
+      bool next_token_is_output = false;
+      bool next_token_is_output_append = false;
+      bool next_token_is_stderr = false;
+      bool next_token_is_stderr_append = false;
+      bool next_token_is_both = false;
       token = strtok(input_copy, " ");
       while (token != NULL) {
         if (strcmp(token, "|") == 0) {
@@ -390,38 +394,67 @@ int main(int argc, char *argv[]) {
 
           args = malloc(64 * sizeof(char *));
           arg_index = 0;
+        } else if (strcmp(token, ">>") == 0) {
+          next_token_is_output_append = true;
         } else if (strcmp(token, ">") == 0) {
           next_token_is_output = true;
         } else if (strcmp(token, "<") == 0) {
           next_token_is_input = true;
+        } else if (strcmp(token, "2>") == 0) {
+          next_token_is_stderr = true;
+        } else if (strcmp(token, "2>>") == 0) {
+          next_token_is_stderr_append = true;
+        } else if (strcmp(token, "&>") == 0) {
+          next_token_is_both = true;
         } else if (next_token_is_output) {
           int fd = open(token, O_WRONLY | O_CREAT | O_TRUNC, 0644);
           if (fd < 0) {
-            perror("open for output");
-            // nettoyage mémoire comme avant
-            free(input_copy);
-            free(input);
-            free(args);
-            free(new_job->command);
-            free(new_job);
-            return 1;
+            perror("open >");
+            exit(1);
           }
           new_job->stdout = fd;
           next_token_is_output = false;
+        } else if (next_token_is_output_append) {
+          int fd = open(token, O_WRONLY | O_CREAT | O_APPEND, 0644);
+          if (fd < 0) {
+            perror("open >>");
+            exit(1);
+          }
+          new_job->stdout = fd;
+          next_token_is_output_append = false;
         } else if (next_token_is_input) {
           int fd = open(token, O_RDONLY);
           if (fd < 0) {
-            perror("open for input");
-            // nettoyage mémoire comme avant
-            free(input_copy);
-            free(input);
-            free(args);
-            free(new_job->command);
-            free(new_job);
-            return 1;
+            perror("open <");
+            exit(1);
           }
           new_job->stdin = fd;
           next_token_is_input = false;
+        } else if (next_token_is_stderr) {
+          int fd = open(token, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          if (fd < 0) {
+            perror("open 2>");
+            exit(1);
+          }
+          new_job->stderr = fd;
+          next_token_is_stderr = false;
+        } else if (next_token_is_stderr_append) {
+          int fd = open(token, O_WRONLY | O_CREAT | O_APPEND, 0644);
+          if (fd < 0) {
+            perror("open 2>>");
+            exit(1);
+          }
+          new_job->stderr = fd;
+          next_token_is_stderr_append = false;
+        } else if (next_token_is_both) {
+          int fd = open(token, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          if (fd < 0) {
+            perror("open &>");
+            exit(1);
+          }
+          new_job->stdout = fd;
+          new_job->stderr = fd;
+          next_token_is_both = false;
         } else {
           args[arg_index++] = strdup(token);
         }
