@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #define _²OPEN_SYS
 #include <readline/history.h>
@@ -261,6 +262,7 @@ void launch_job(job *j, int foreground) {
   else
     put_job_in_background(j, 0);
 }
+
 job *makeJob(char *input) {
   job *new_job = malloc(sizeof(job));
   new_job->command = strdup(input);
@@ -272,6 +274,7 @@ job *makeJob(char *input) {
   new_job->next = NULL;
   return new_job;
 }
+
 int main(int argc, char *argv[]) {
   init_shell();
 
@@ -346,7 +349,6 @@ int main(int argc, char *argv[]) {
         free(input);
         continue;
       }
-
       char *token;
       char **args = malloc(64 * sizeof(char *));
       int arg_index = 0;
@@ -363,6 +365,8 @@ int main(int argc, char *argv[]) {
       process *head = NULL;
       process *tail = NULL;
 
+      bool next_token_is_output = false;
+      bool next_token_is_input = false;
       token = strtok(input_copy, " ");
       while (token != NULL) {
         if (strcmp(token, "|") == 0) {
@@ -386,16 +390,48 @@ int main(int argc, char *argv[]) {
 
           args = malloc(64 * sizeof(char *));
           arg_index = 0;
+        } else if (strcmp(token, ">") == 0) {
+          next_token_is_output = true;
+        } else if (strcmp(token, "<") == 0) {
+          next_token_is_input = true;
+        } else if (next_token_is_output) {
+          int fd = open(token, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          if (fd < 0) {
+            perror("open for output");
+            // nettoyage mémoire comme avant
+            free(input_copy);
+            free(input);
+            free(args);
+            free(new_job->command);
+            free(new_job);
+            return 1;
+          }
+          new_job->stdout = fd;
+          next_token_is_output = false;
+        } else if (next_token_is_input) {
+          int fd = open(token, O_RDONLY);
+          if (fd < 0) {
+            perror("open for input");
+            // nettoyage mémoire comme avant
+            free(input_copy);
+            free(input);
+            free(args);
+            free(new_job->command);
+            free(new_job);
+            return 1;
+          }
+          new_job->stdin = fd;
+          next_token_is_input = false;
         } else {
           args[arg_index++] = strdup(token);
         }
-
         token = strtok(NULL, " ");
       }
 
-      // Ajouter le dernier process après la dernière commande
+      // Ajouter le dernier process
       if (arg_index > 0) {
         args[arg_index] = NULL;
+
         process *p = malloc(sizeof(process));
         p->argv = args;
         p->next = NULL;
@@ -417,7 +453,6 @@ int main(int argc, char *argv[]) {
       new_job->first_process = head;
       launch_job(new_job, 1);
     }
-
     // Free the inpu from readline outside the if statement
     free(input);
   }
