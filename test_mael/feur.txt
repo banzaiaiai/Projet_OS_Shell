@@ -1,0 +1,6 @@
+total 56
+drwxr-xr-x. 1 banzaiaiai banzaiaiai    24 18 mars  16:13 feur
+-rw-r--r--. 1 banzaiaiai banzaiaiai     0  7 avril 15:59 feur.txt
+-rwxr-xr-x. 1 banzaiaiai banzaiaiai 16616 24 mars  15:41 gentil
+-rwxr-xr-x. 1 banzaiaiai banzaiaiai 22984  7 avril 15:59 main
+-rw-r--r--. 1 banzaiaiai banzaiaiai 11567  7 avril 15:59 main.c

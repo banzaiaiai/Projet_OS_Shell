@@ -174,7 +174,7 @@ void init_shell() {
     signal(SIGTSTP, SIG_IGN);
     signal(SIGTTIN, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
-    signal(SIGCHLD, SIG_IGN);
+    // signal(SIGCHLD, SIG_IGN);
 
     /* Put ourselves in our own process group.  */
     shell_pgid = getpid();
@@ -202,8 +202,9 @@ void launch_process(process *p, pid_t pgid, int infile, int outfile,
     pid = getpid();
     if (pgid == 0)
       pgid = pid;
-    
-    while (setpgid(pid, pgid) < 0 && errno == EACCES);
+
+    while (setpgid(pid, pgid) < 0 && errno == EACCES)
+      ;
 
     if (foreground)
       tcsetpgrp(shell_terminal, pgid);
@@ -232,6 +233,7 @@ void launch_process(process *p, pid_t pgid, int infile, int outfile,
   }
 
   /* Exec the new process.  Make sure we exit.  */
+  printf("%s", p->argv[0]);
   execvp(p->argv[0], p->argv);
 
   perror("execvp");
@@ -281,7 +283,7 @@ void launch_job(job *j, int foreground) {
       close(outfile);
     infile = mypipe[0];
   }
-  
+
   /* Add job to the job list */
   j->next = first_job;
   first_job = j;
@@ -304,7 +306,7 @@ void check_jobs_status() {
 
   /* Update status information for child processes */
   do {
-    pid = waitpid(WAIT_ANY, &status, WUNTRACED|WNOHANG);
+    pid = waitpid(WAIT_ANY, &status, WUNTRACED | WNOHANG);
   } while (!mark_process_status(pid, status) && pid > 0);
 
   /* Check for completed jobs */
@@ -329,13 +331,11 @@ void check_jobs_status() {
       }
       free(j->command);
       free(j);
-    } 
-    else if (job_is_stopped(j) && !j->notified) {
+    } else if (job_is_stopped(j) && !j->notified) {
       format_job_info(j, "stopped");
       j->notified = 1;
       jlast = j;
-    }
-    else
+    } else
       jlast = j;
   }
 }
@@ -343,20 +343,20 @@ void check_jobs_status() {
 void list_jobs() {
   job *j;
   int job_num = 1;
-  
+
   for (j = first_job; j; j = j->next) {
     printf("[%d] %6d ", job_num++, j->pgid);
-    
+
     if (job_is_completed(j))
       printf("Completed");
     else if (job_is_stopped(j))
       printf("Stopped  ");
     else
       printf("Running  ");
-      
+
     printf("\t%s\n", j->command);
   }
-  
+
   if (!first_job) {
     printf("No active jobs\n");
   }
@@ -366,32 +366,32 @@ void list_jobs() {
 job *find_job_by_number(int job_num) {
   job *j;
   int i = 1;
-  
+
   for (j = first_job; j; j = j->next, i++) {
     if (i == job_num) {
       return j;
     }
   }
-  
+
   return NULL;
 }
 
 job *find_job_by_pid(pid_t pid) {
   job *j;
-  
+
   for (j = first_job; j; j = j->next) {
     if (j->pgid == pid) {
       return j;
     }
   }
-  
+
   return NULL;
 }
 
 void do_fg(char *arg) {
   job *j;
   int job_num;
-  
+
   // If no argument, use the most recent job
   if (!arg || !*arg) {
     j = first_job;
@@ -406,7 +406,7 @@ void do_fg(char *arg) {
       fprintf(stderr, "fg: invalid job number: %s\n", arg);
       return;
     }
-    
+
     j = find_job_by_number(job_num);
     if (!j) {
       fprintf(stderr, "fg: %s: no such job\n", arg);
@@ -419,19 +419,19 @@ void do_fg(char *arg) {
       fprintf(stderr, "fg: invalid argument: %s\n", arg);
       return;
     }
-    
+
     j = find_job_by_pid(pid);
     if (!j) {
       fprintf(stderr, "fg: %s: no such process group\n", arg);
       return;
     }
   }
-  
+
   // Continue the job if it was stopped
   if (job_is_stopped(j)) {
     printf("Continuing %s\n", j->command);
   }
-  
+
   // Put the job in the foreground
   put_job_in_foreground(j, job_is_stopped(j));
 }
@@ -439,7 +439,7 @@ void do_fg(char *arg) {
 void do_bg(char *arg) {
   job *j;
   int job_num;
-  
+
   // If no argument, use the most recent stopped job
   if (!arg || !*arg) {
     // Find the most recent stopped job
@@ -448,7 +448,7 @@ void do_bg(char *arg) {
         break;
       }
     }
-    
+
     if (!j) {
       fprintf(stderr, "bg: no stopped jobs\n");
       return;
@@ -460,13 +460,13 @@ void do_bg(char *arg) {
       fprintf(stderr, "bg: invalid job number: %s\n", arg);
       return;
     }
-    
+
     j = find_job_by_number(job_num);
     if (!j) {
       fprintf(stderr, "bg: %s: no such job\n", arg);
       return;
     }
-    
+
     if (!job_is_stopped(j)) {
       fprintf(stderr, "bg: job already in background\n");
       return;
@@ -478,19 +478,19 @@ void do_bg(char *arg) {
       fprintf(stderr, "bg: invalid argument: %s\n", arg);
       return;
     }
-    
+
     j = find_job_by_pid(pid);
     if (!j) {
       fprintf(stderr, "bg: %s: no such process group\n", arg);
       return;
     }
-    
+
     if (!job_is_stopped(j)) {
       fprintf(stderr, "bg: job already in background\n");
       return;
     }
   }
-  
+
   // Continue the stopped job in the background
   printf("Continuing %s in background\n", j->command);
   put_job_in_background(j, 1);
@@ -511,7 +511,7 @@ job *parse_command(char *input) {
   j->notified = 0;
   j->next = NULL;
   j->background = 0;
-  
+
   char *input_copy = strdup(input);
   if (!input_copy) {
     perror("strdup");
@@ -519,7 +519,7 @@ job *parse_command(char *input) {
     free(j);
     return NULL;
   }
-  
+
   // Check if command ends with '&' to run in background
   int len = strlen(input_copy);
   if (len > 0 && input_copy[len - 1] == '&') {
@@ -532,18 +532,18 @@ job *parse_command(char *input) {
       len--;
     }
   }
-  
+
   process *head = NULL;
   process *tail = NULL;
   char *saveptr;
   char *pipe_token = strtok_r(input_copy, "|", &saveptr);
-  
+
   while (pipe_token) {
     // Trim leading whitespace
     while (*pipe_token && isspace(*pipe_token)) {
       pipe_token++;
     }
-    
+
     // Skip empty pipe segments
     if (*pipe_token) {
       process *p = malloc(sizeof(process));
@@ -560,13 +560,13 @@ job *parse_command(char *input) {
         free(j);
         return NULL;
       }
-      
+
       p->next = NULL;
       p->completed = 0;
       p->stopped = 0;
       p->status = 0;
       p->pid = 0;
-      
+
       // Parse arguments for this process
       char *token_copy = strdup(pipe_token);
       char **args = malloc(64 * sizeof(char *));
@@ -585,18 +585,18 @@ job *parse_command(char *input) {
         free(j);
         return NULL;
       }
-      
+
       int arg_index = 0;
       char *arg_saveptr;
       char *arg = strtok_r(token_copy, " \t", &arg_saveptr);
-      
+
       bool next_token_is_input = false;
       bool next_token_is_output = false;
       bool next_token_is_output_append = false;
       bool next_token_is_stderr = false;
       bool next_token_is_stderr_append = false;
       bool next_token_is_both = false;
-      
+
       while (arg && arg_index < 63) {
         if (strcmp(arg, "<") == 0) {
           next_token_is_input = true;
@@ -662,16 +662,16 @@ job *parse_command(char *input) {
         } else {
           args[arg_index++] = strdup(arg);
         }
-        
+
         arg = strtok_r(NULL, " \t", &arg_saveptr);
       }
-      
+
       args[arg_index] = NULL;
       p->argv = args;
       p->taille = arg_index;
-      
+
       free(token_copy);
-      
+
       // Add process to the list
       if (!head) {
         head = tail = p;
@@ -680,13 +680,13 @@ job *parse_command(char *input) {
         tail = p;
       }
     }
-    
+
     pipe_token = strtok_r(NULL, "|", &saveptr);
   }
-  
+
   free(input_copy);
   j->first_process = head;
-  
+
   return j;
 }
 
@@ -702,7 +702,7 @@ int main(int argc, char *argv[]) {
 
     /* Display prompt and read command */
     char *input = readline("mael shell> ");
-    
+
     if (!input) {
       /* End of file (Ctrl+D) */
       printf("\n");
@@ -723,26 +723,29 @@ int main(int argc, char *argv[]) {
         continue;
       } else if (strncmp(input, "fg", 2) == 0) {
         char *arg = input + 2;
-        while (*arg && isspace(*arg)) arg++; // Skip whitespace
+        while (*arg && isspace(*arg))
+          arg++; // Skip whitespace
         do_fg(arg);
         free(input);
         continue;
       } else if (strncmp(input, "bg", 2) == 0) {
         char *arg = input + 2;
-        while (*arg && isspace(*arg)) arg++; // Skip whitespace
+        while (*arg && isspace(*arg))
+          arg++; // Skip whitespace
         do_bg(arg);
         free(input);
         continue;
       } else if (strncmp(input, "cd", 2) == 0) {
         char *dir = input + 2;
-        while (*dir && isspace(*dir)) dir++; /* Skip whitespace */
-        
+        while (*dir && isspace(*dir))
+          dir++; /* Skip whitespace */
+
         if (*dir == '\0')
           dir = getenv("HOME");
-          
+
         if (chdir(dir) != 0)
           perror("chdir");
-          
+
         free(input);
         continue;
       }
@@ -757,7 +760,7 @@ int main(int argc, char *argv[]) {
         free(j);
       }
     }
-    
+
     free(input);
   }
 
