@@ -1,8 +1,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
-#define _²OPEN_SYS
-#include <ctype.h> 
+#define _OPEN_SYS
+#include <ctype.h>
 #include <readline/history.h>
 #include <readline/readline.h>
 #include <signal.h>
@@ -36,6 +36,7 @@ typedef struct job {
   char notified;             /* true if user told about stopped job */
   struct termios tmodes;     /* saved terminal modes */
   int stdin, stdout, stderr; /* standard i/o channels */
+  int background;            /* is job running in background? */
 } job;
 
 // Variable globale
@@ -49,6 +50,7 @@ job *first_job = NULL;
 void format_job_info(job *j, const char *status) {
   fprintf(stderr, "%ld (%s): %s\n", (long)j->pgid, status, j->command);
 }
+
 int mark_process_status(pid_t pid, int status) {
   job *j;
   process *p;
@@ -82,6 +84,7 @@ int mark_process_status(pid_t pid, int status) {
     return -1;
   }
 }
+
 int job_is_stopped(job *j) {
   process *p;
 
@@ -90,6 +93,7 @@ int job_is_stopped(job *j) {
       return 0;
   return 1;
 }
+
 int job_is_completed(job *j) {
   process *p;
 
@@ -98,23 +102,23 @@ int job_is_completed(job *j) {
       return 0;
   return 1;
 }
+
 void wait_for_job(job *j) {
   int status;
   pid_t pid;
 
   do {
-    //pid = waitpid(WAIT_ANY, &status, WUNTRACED);
     pid = waitpid(WAIT_ANY, &status, WUNTRACED);
     if (pid == -1) {
-        if (errno == ECHILD) {
-            fprintf(stderr, "waitpid: No more children\n");
-            break;
-        }
-        perror("waitpid");
+      if (errno == ECHILD) {
+        fprintf(stderr, "waitpid: No more children\n");
         break;
+      }
+      perror("waitpid");
+      break;
     }
   } while (!mark_process_status(pid, status) && !job_is_stopped(j) &&
-         !job_is_completed(j));
+           !job_is_completed(j));
 }
 
 void put_job_in_foreground(job *j, int cont) {
@@ -123,50 +127,38 @@ void put_job_in_foreground(job *j, int cont) {
 
   /* Send the job a continue signal, if necessary.  */
   if (cont) {
-    if(tcsetattr(shell_terminal, TCSADRAIN, &j->tmodes) == -1){
-        perror("tcsetpgrp to job");
-    }  else {
-    fprintf(stderr, "Foreground control given to PGID %d\n", j->pgid);
+    if (tcsetattr(shell_terminal, TCSADRAIN, &j->tmodes) == -1) {
+      perror("tcsetpgrp to job");
+    } else {
+      fprintf(stderr, "Foreground control given to PGID %d\n", j->pgid);
     }
 
-    fprintf(stderr, "Checking if PGID %d has any children...\n", j->pgid);
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "ps --ppid %d -o pid,pgid,stat,cmd", j->pgid);
-    system(cmd);
-
-    fprintf(stderr, "Sending SIGCONT to %d\n", -j->pgid);
     if (kill(-j->pgid, SIGCONT) < 0)
       perror("kill (SIGCONT)");
-    fprintf(stderr, "Sent SIGCONT, now waiting for job...\n");
   }
 
   /* Wait for it to report.  */
-  //wait_for_job(j);
-  int attempts = 0;
-  while (!job_is_stopped(j) && !job_is_completed(j) && attempts++ < 10) {
-    wait_for_job(j); // still blocks, but only for each signal
-    sleep(1);
-  }
-
+  wait_for_job(j);
 
   /* Put the shell back in the foreground.  */
-  //tcsetpgrp(shell_terminal, shell_pgid);
   if (tcsetpgrp(shell_terminal, shell_pgid) == -1) {
     perror("tcsetpgrp to shell");
   } else {
     fprintf(stderr, "Terminal control returned to shell\n");
   }
 
-  /* Restore the shell’s terminal modes.  */
+  /* Restore the shell's terminal modes.  */
   tcgetattr(shell_terminal, &j->tmodes);
   tcsetattr(shell_terminal, TCSADRAIN, &shell_tmodes);
 }
+
 void put_job_in_background(job *j, int cont) {
   /* Send the job a continue signal, if necessary.  */
   if (cont)
     if (kill(-j->pgid, SIGCONT) < 0)
       perror("kill (SIGCONT)");
 }
+
 void init_shell() {
   /* See if we are running interactively.  */
   shell_terminal = STDIN_FILENO;
@@ -198,6 +190,7 @@ void init_shell() {
     tcgetattr(shell_terminal, &shell_tmodes);
   }
 }
+
 void launch_process(process *p, pid_t pgid, int infile, int outfile,
                     int errfile, int foreground) {
   pid_t pid;
@@ -210,7 +203,6 @@ void launch_process(process *p, pid_t pgid, int infile, int outfile,
     if (pgid == 0)
       pgid = pid;
     
-    //setpgid(pid, pgid);
     while (setpgid(pid, pgid) < 0 && errno == EACCES);
 
     if (foreground)
@@ -245,6 +237,7 @@ void launch_process(process *p, pid_t pgid, int infile, int outfile,
   perror("execvp");
   exit(1);
 }
+
 void launch_job(job *j, int foreground) {
   process *p;
   pid_t pid;
@@ -301,81 +294,6 @@ void launch_job(job *j, int foreground) {
     put_job_in_foreground(j, 0);
   else
     put_job_in_background(j, 0);
-
-
-  // // Add job to job list
-  // if (first_job) {
-  //   job *last_job = first_job;
-  //   while (last_job->next)
-  //     last_job = last_job->next;
-  //   last_job->next = j;
-  // } else {
-  //   first_job = j;
-  // }
-}
-
-job *makeJob(char *input) {
-  job *new_job = malloc(sizeof(job));
-  new_job->command = strdup(input);
-  new_job->stdin = STDIN_FILENO;
-  new_job->stdout = STDOUT_FILENO;
-  new_job->stderr = STDERR_FILENO;
-  new_job->pgid = 0;
-  new_job->notified = 0;
-  new_job->next = NULL;
-  return new_job;
-}
-
-void update_job_status() {
-  int status;
-  pid_t pid;
-
-  do {
-    pid = waitpid(WAIT_ANY, &status, WUNTRACED | WNOHANG);
-    if (pid > 0) {
-      mark_process_status(pid, status);
-    }
-  } while (pid > 0);
-
-  // Clean up completed jobs
-  job *j = first_job;
-  job *prev_job = NULL;
-  
-  while (j) {
-    if (job_is_completed(j)) {
-      // Remove job from the job list
-      job *next_job = j->next;
-      
-      if (prev_job) {
-        prev_job->next = next_job;
-      } else {
-        first_job = next_job;
-      }
-      
-      // Free job resources
-      process *p = j->first_process;
-      while (p) {
-        process *next_p = p->next;
-        
-        // Free process arguments
-        for (int i = 0; i < p->taille; i++) {
-          free(p->argv[i]);
-        }
-        free(p->argv);
-        free(p);
-        
-        p = next_p;
-      }
-      
-      free(j->command);
-      free(j);
-      
-      j = next_job;
-    } else {
-      prev_job = j;
-      j = j->next;
-    }
-  }
 }
 
 void check_jobs_status() {
@@ -458,9 +376,20 @@ job *find_job_by_number(int job_num) {
   return NULL;
 }
 
+job *find_job_by_pid(pid_t pid) {
+  job *j;
+  
+  for (j = first_job; j; j = j->next) {
+    if (j->pgid == pid) {
+      return j;
+    }
+  }
+  
+  return NULL;
+}
+
 void do_fg(char *arg) {
   job *j;
-  pid_t pgid;
   int job_num;
   
   // If no argument, use the most recent job
@@ -484,7 +413,18 @@ void do_fg(char *arg) {
       return;
     }
   } else {
-    return;
+    // Try to interpret as PID
+    pid_t pid = atoi(arg);
+    if (pid <= 0) {
+      fprintf(stderr, "fg: invalid argument: %s\n", arg);
+      return;
+    }
+    
+    j = find_job_by_pid(pid);
+    if (!j) {
+      fprintf(stderr, "fg: %s: no such process group\n", arg);
+      return;
+    }
   }
   
   // Continue the job if it was stopped
@@ -496,6 +436,259 @@ void do_fg(char *arg) {
   put_job_in_foreground(j, job_is_stopped(j));
 }
 
+void do_bg(char *arg) {
+  job *j;
+  int job_num;
+  
+  // If no argument, use the most recent stopped job
+  if (!arg || !*arg) {
+    // Find the most recent stopped job
+    for (j = first_job; j; j = j->next) {
+      if (job_is_stopped(j)) {
+        break;
+      }
+    }
+    
+    if (!j) {
+      fprintf(stderr, "bg: no stopped jobs\n");
+      return;
+    }
+  } else if (arg[0] == '%') {
+    // Parse job number (format: %1, %2, etc.)
+    job_num = atoi(arg + 1);
+    if (job_num <= 0) {
+      fprintf(stderr, "bg: invalid job number: %s\n", arg);
+      return;
+    }
+    
+    j = find_job_by_number(job_num);
+    if (!j) {
+      fprintf(stderr, "bg: %s: no such job\n", arg);
+      return;
+    }
+    
+    if (!job_is_stopped(j)) {
+      fprintf(stderr, "bg: job already in background\n");
+      return;
+    }
+  } else {
+    // Try to interpret as PID
+    pid_t pid = atoi(arg);
+    if (pid <= 0) {
+      fprintf(stderr, "bg: invalid argument: %s\n", arg);
+      return;
+    }
+    
+    j = find_job_by_pid(pid);
+    if (!j) {
+      fprintf(stderr, "bg: %s: no such process group\n", arg);
+      return;
+    }
+    
+    if (!job_is_stopped(j)) {
+      fprintf(stderr, "bg: job already in background\n");
+      return;
+    }
+  }
+  
+  // Continue the stopped job in the background
+  printf("Continuing %s in background\n", j->command);
+  put_job_in_background(j, 1);
+}
+
+/* Parse a command line into a job structure */
+job *parse_command(char *input) {
+  job *j = malloc(sizeof(job));
+  if (!j) {
+    perror("malloc");
+    return NULL;
+  }
+  j->command = strdup(input);
+  j->stdin = STDIN_FILENO;
+  j->stdout = STDOUT_FILENO;
+  j->stderr = STDERR_FILENO;
+  j->pgid = 0;
+  j->notified = 0;
+  j->next = NULL;
+  j->background = 0;
+  
+  char *input_copy = strdup(input);
+  if (!input_copy) {
+    perror("strdup");
+    free(j->command);
+    free(j);
+    return NULL;
+  }
+  
+  // Check if command ends with '&' to run in background
+  int len = strlen(input_copy);
+  if (len > 0 && input_copy[len - 1] == '&') {
+    input_copy[len - 1] = '\0';
+    j->background = 1;
+    // Trim trailing whitespace
+    len = strlen(input_copy);
+    while (len > 0 && isspace(input_copy[len - 1])) {
+      input_copy[len - 1] = '\0';
+      len--;
+    }
+  }
+  
+  process *head = NULL;
+  process *tail = NULL;
+  char *saveptr;
+  char *pipe_token = strtok_r(input_copy, "|", &saveptr);
+  
+  while (pipe_token) {
+    // Trim leading whitespace
+    while (*pipe_token && isspace(*pipe_token)) {
+      pipe_token++;
+    }
+    
+    // Skip empty pipe segments
+    if (*pipe_token) {
+      process *p = malloc(sizeof(process));
+      if (!p) {
+        perror("malloc");
+        // Clean up
+        free(input_copy);
+        while (head) {
+          process *next = head->next;
+          free(head);
+          head = next;
+        }
+        free(j->command);
+        free(j);
+        return NULL;
+      }
+      
+      p->next = NULL;
+      p->completed = 0;
+      p->stopped = 0;
+      p->status = 0;
+      p->pid = 0;
+      
+      // Parse arguments for this process
+      char *token_copy = strdup(pipe_token);
+      char **args = malloc(64 * sizeof(char *));
+      if (!args || !token_copy) {
+        perror("malloc/strdup");
+        // Clean up
+        free(token_copy);
+        free(p);
+        free(input_copy);
+        while (head) {
+          process *next = head->next;
+          free(head);
+          head = next;
+        }
+        free(j->command);
+        free(j);
+        return NULL;
+      }
+      
+      int arg_index = 0;
+      char *arg_saveptr;
+      char *arg = strtok_r(token_copy, " \t", &arg_saveptr);
+      
+      bool next_token_is_input = false;
+      bool next_token_is_output = false;
+      bool next_token_is_output_append = false;
+      bool next_token_is_stderr = false;
+      bool next_token_is_stderr_append = false;
+      bool next_token_is_both = false;
+      
+      while (arg && arg_index < 63) {
+        if (strcmp(arg, "<") == 0) {
+          next_token_is_input = true;
+        } else if (strcmp(arg, ">") == 0) {
+          next_token_is_output = true;
+        } else if (strcmp(arg, ">>") == 0) {
+          next_token_is_output_append = true;
+        } else if (strcmp(arg, "2>") == 0) {
+          next_token_is_stderr = true;
+        } else if (strcmp(arg, "2>>") == 0) {
+          next_token_is_stderr_append = true;
+        } else if (strcmp(arg, "&>") == 0) {
+          next_token_is_both = true;
+        } else if (next_token_is_input) {
+          int fd = open(arg, O_RDONLY);
+          if (fd < 0) {
+            perror("open <");
+          } else {
+            j->stdin = fd;
+          }
+          next_token_is_input = false;
+        } else if (next_token_is_output) {
+          int fd = open(arg, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          if (fd < 0) {
+            perror("open >");
+          } else {
+            j->stdout = fd;
+          }
+          next_token_is_output = false;
+        } else if (next_token_is_output_append) {
+          int fd = open(arg, O_WRONLY | O_CREAT | O_APPEND, 0644);
+          if (fd < 0) {
+            perror("open >>");
+          } else {
+            j->stdout = fd;
+          }
+          next_token_is_output_append = false;
+        } else if (next_token_is_stderr) {
+          int fd = open(arg, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          if (fd < 0) {
+            perror("open 2>");
+          } else {
+            j->stderr = fd;
+          }
+          next_token_is_stderr = false;
+        } else if (next_token_is_stderr_append) {
+          int fd = open(arg, O_WRONLY | O_CREAT | O_APPEND, 0644);
+          if (fd < 0) {
+            perror("open 2>>");
+          } else {
+            j->stderr = fd;
+          }
+          next_token_is_stderr_append = false;
+        } else if (next_token_is_both) {
+          int fd = open(arg, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          if (fd < 0) {
+            perror("open &>");
+          } else {
+            j->stdout = fd;
+            j->stderr = fd;
+          }
+          next_token_is_both = false;
+        } else {
+          args[arg_index++] = strdup(arg);
+        }
+        
+        arg = strtok_r(NULL, " \t", &arg_saveptr);
+      }
+      
+      args[arg_index] = NULL;
+      p->argv = args;
+      p->taille = arg_index;
+      
+      free(token_copy);
+      
+      // Add process to the list
+      if (!head) {
+        head = tail = p;
+      } else {
+        tail->next = p;
+        tail = p;
+      }
+    }
+    
+    pipe_token = strtok_r(NULL, "|", &saveptr);
+  }
+  
+  free(input_copy);
+  j->first_process = head;
+  
+  return j;
+}
 
 int main(int argc, char *argv[]) {
   init_shell();
@@ -520,30 +713,27 @@ int main(int argc, char *argv[]) {
     if (input[0] != '\0') {
       add_history(input);
 
-      /* Check for exit command */
+      /* Check for built-in commands */
       if (strcmp(input, "exit") == 0) {
         free(input);
         break;
-      }
-
-      /* Check for jobs command */
-      if (strcmp(input, "jobs") == 0) {
+      } else if (strcmp(input, "jobs") == 0) {
         list_jobs();
         free(input);
         continue;
-      }
-
-      /* Check for fg command */
-      if (strncmp(input, "fg", 2) == 0) {
+      } else if (strncmp(input, "fg", 2) == 0) {
         char *arg = input + 2;
         while (*arg && isspace(*arg)) arg++; // Skip whitespace
         do_fg(arg);
         free(input);
         continue;
-      }
-
-      /* Check for cd command */
-      if (strncmp(input, "cd", 2) == 0) {
+      } else if (strncmp(input, "bg", 2) == 0) {
+        char *arg = input + 2;
+        while (*arg && isspace(*arg)) arg++; // Skip whitespace
+        do_bg(arg);
+        free(input);
+        continue;
+      } else if (strncmp(input, "cd", 2) == 0) {
         char *dir = input + 2;
         while (*dir && isspace(*dir)) dir++; /* Skip whitespace */
         
@@ -557,91 +747,18 @@ int main(int argc, char *argv[]) {
         continue;
       }
 
-      /* Copy input for tokenizing */
-      char *cmd_copy = strdup(input);
-      if (!cmd_copy) {
-        perror("strdup");
-        free(input);
-        continue;
-      }
-
-      /* Allocate job structure */
-      job *j = malloc(sizeof(job));
-      if (!j) {
-        perror("malloc");
-        free(cmd_copy);
-        free(input);
-        continue;
-      }
-      
-      j->command = strdup(input);
-      j->stdin = STDIN_FILENO;
-      j->stdout = STDOUT_FILENO;
-      j->stderr = STDERR_FILENO;
-      j->pgid = 0;
-      j->notified = 0;
-      j->next = NULL;
-
-      /* Allocate process */
-      process *p = malloc(sizeof(process));
-      if (!p) {
-        perror("malloc");
+      /* Parse the command */
+      job *j = parse_command(input);
+      if (j && j->first_process) {
+        /* Launch the job */
+        launch_job(j, !j->background);
+      } else if (j) {
         free(j->command);
         free(j);
-        free(cmd_copy);
-        free(input);
-        continue;
       }
-
-      /* Parse the command line */
-      char **args = malloc(64 * sizeof(char *));
-      if (!args) {
-        perror("malloc");
-        free(p);
-        free(j->command);
-        free(j);
-        free(cmd_copy);
-        free(input);
-        continue;
-      }
-
-      int arg_count = 0;
-      char *token = strtok(cmd_copy, " \t");
-      
-      while (token && arg_count < 63) {
-        args[arg_count++] = strdup(token);
-        token = strtok(NULL, " \t");
-      }
-      args[arg_count] = NULL;
-
-      /* Check for background execution */
-      int background = 0;
-      if (arg_count > 0 && strcmp(args[arg_count-1], "&") == 0) {
-        free(args[arg_count-1]);
-        args[--arg_count] = NULL;
-        background = 1;
-      }
-
-      /* Set up the process */
-      p->argv = args;
-      p->next = NULL;
-      p->completed = 0;
-      p->stopped = 0;
-      p->status = 0;
-      p->pid = 0;
-      p->taille = arg_count;
-
-      /* Set up the job */
-      j->first_process = p;
-
-      /* Launch the job */
-      launch_job(j, !background);
-
-      free(cmd_copy);
-      free(input);
-    } else {
-      free(input);
     }
+    
+    free(input);
   }
 
   printf("Exiting mael shell...\n");
