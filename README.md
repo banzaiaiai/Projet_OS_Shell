@@ -27,5 +27,5 @@ Un mini-shell Unix développé en C, implémentant des fonctionnalités essentie
 
 ```bash
 make clean
-make run
+make 
 
