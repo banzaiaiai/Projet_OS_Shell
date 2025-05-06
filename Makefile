@@ -1,33 +1,40 @@
-
 # Nom de l'exécutable
 TARGET = shell
 
+# Répertoires
+SRCDIR = src
+INCDIR = include
+OBJDIR = obj
+
 # Fichiers sources
-SRCS = main.c terminal.c
+SRCS = $(wildcard $(SRCDIR)/*.c)
 
-# Fichiers objets (automatiquement dérivés des sources)
-OBJS = $(SRCS:.c=.o)
+# Fichiers objets (placés dans obj/)
+OBJS = $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(SRCS))
 
-# Compilateur
+# Compilateur et options
 CC = gcc
-
-# Options de compilation
-CFLAGS = -Wall -Wextra -g -lreadline -o3
+CFLAGS = -Wall -Wextra -g -I$(INCDIR) -lreadline -o3
 
 # Règle par défaut
 all: $(TARGET)
 
-# Édition de liens
+# Edition de lien
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
-# Compilation des fichiers .c en .o
-%.o: %.c
+# Compilation des .c en .o dans obj/
+$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Nettoyer les fichiers générés
-clean:
-	rm -f $(OBJS) $(TARGET)
+# Créer le dossier obj si nécessaire
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
 
-# Optionnel : forcer re-compilation complète
+# Nettoyage
+clean:
+	rm -rf $(OBJDIR) $(TARGET)
+
+# Rebuild complet
 re: clean all
+
