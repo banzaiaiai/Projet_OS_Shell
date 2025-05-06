@@ -1,11 +1,19 @@
 #include "parse.h"
 
+/**
+ * Parses a command line input into a `job` structure.
+ * Handles background execution, piping, redirection of stdin/stdout/stderr,
+ * and constructs a linked list of `process` structures.
+ */
 job *parse_command(char *input) {
+  // Allocate memory for the job structure
   job *j = malloc(sizeof(job));
   if (!j) {
     perror("malloc");
     return NULL;
   }
+
+  // Initialize the job structure with default values
   j->command = strdup(input);
   j->stdin = STDIN_FILENO;
   j->stdout = STDOUT_FILENO;
@@ -15,6 +23,7 @@ job *parse_command(char *input) {
   j->next = NULL;
   j->background = 0;
 
+  // Make a modifiable copy of the input for parsing
   char *input_copy = strdup(input);
   if (!input_copy) {
     perror("strdup");
@@ -23,7 +32,7 @@ job *parse_command(char *input) {
     return NULL;
   }
 
-  // Check if command ends with '&' to run in background
+  // Check if the command ends with '&' to run it in the background
   int len = strlen(input_copy);
   if (len > 0 && input_copy[len - 1] == '&') {
     input_copy[len - 1] = '\0';
@@ -36,8 +45,11 @@ job *parse_command(char *input) {
     }
   }
 
+  // Initialize the process list
   process *head = NULL;
   process *tail = NULL;
+
+  // Tokenize input based on the pipe symbol '|'
   char *saveptr;
   char *pipe_token = strtok_r(input_copy, "|", &saveptr);
 
@@ -47,12 +59,13 @@ job *parse_command(char *input) {
       pipe_token++;
     }
 
-    // Skip empty pipe segments
+    // Skip empty segments
     if (*pipe_token) {
+      // Allocate and initialize a new process
       process *p = malloc(sizeof(process));
       if (!p) {
         perror("malloc");
-        // Clean up
+        // Cleanup on failure
         free(input_copy);
         while (head) {
           process *next = head->next;
@@ -70,12 +83,12 @@ job *parse_command(char *input) {
       p->status = 0;
       p->pid = 0;
 
-      // Parse arguments for this process
+      // Parse arguments and redirection symbols
       char *token_copy = strdup(pipe_token);
       char **args = malloc(64 * sizeof(char *));
       if (!args || !token_copy) {
         perror("malloc/strdup");
-        // Clean up
+        // Cleanup on failure
         free(token_copy);
         free(p);
         free(input_copy);
@@ -93,6 +106,7 @@ job *parse_command(char *input) {
       char *arg_saveptr;
       char *arg = strtok_r(token_copy, " \t", &arg_saveptr);
 
+      // Flags to track redirection types
       bool next_token_is_input = false;
       bool next_token_is_output = false;
       bool next_token_is_output_append = false;
@@ -100,6 +114,7 @@ job *parse_command(char *input) {
       bool next_token_is_stderr_append = false;
       bool next_token_is_both = false;
 
+      // Parse arguments and handle I/O redirections
       while (arg && arg_index < 63) {
         if (strcmp(arg, "<") == 0) {
           next_token_is_input = true;
@@ -163,6 +178,7 @@ job *parse_command(char *input) {
           }
           next_token_is_both = false;
         } else {
+          // Regular argument
           args[arg_index++] = strdup(arg);
         }
 
@@ -175,7 +191,7 @@ job *parse_command(char *input) {
 
       free(token_copy);
 
-      // Add process to the list
+      // Add the process to the job's process list
       if (!head) {
         head = tail = p;
       } else {
@@ -184,9 +200,11 @@ job *parse_command(char *input) {
       }
     }
 
+    // Continue with the next segment of the pipeline
     pipe_token = strtok_r(NULL, "|", &saveptr);
   }
 
+  // Finalize the job structure
   free(input_copy);
   j->first_process = head;
 
